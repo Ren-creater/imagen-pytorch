@@ -1665,7 +1665,7 @@ class Unet(nn.Module):
         # main conditioning tokens (c)
 
         c = time_tokens if not exists(text_tokens) else torch.cat((time_tokens, text_tokens), dim = -2)
-        # add : label conditioning
+        # add: label conditioning
         
         if exists(label_embeds):
             label_tokens = self.label_to_cond(label_embeds).unsqueeze(-2)
