@@ -1155,6 +1155,8 @@ class Unet(nn.Module):
         resize_mode = 'nearest',
         combine_upsample_fmaps = False,      # combine feature maps from all upsample blocks, used in unet squared successfully
         pixel_shuffle_upsample = True,       # may address checkboard artifacts
+        cond_on_labels = False, 
+        label_embed_dim = None
     ):
         super().__init__()
 
@@ -1162,8 +1164,8 @@ class Unet(nn.Module):
 
         assert attn_heads > 1, 'you need to have more than 1 attention head, ideally at least 4 or 8'
 
-        if dim < 128:
-            print_once('The base dimension of your u-net should ideally be no smaller than 128, as recommended by a professional DDPM trainer https://nonint.com/2022/05/04/friends-dont-let-friends-train-small-diffusion-models/')
+        # if dim < 128:
+        #     print_once('The base dimension of your u-net should ideally be no smaller than 128, as recommended by a professional DDPM trainer https://nonint.com/2022/05/04/friends-dont-let-friends-train-small-diffusion-models/')
 
         # save locals to take care of some hyperparameters for cascading DDPM
 
@@ -1255,6 +1257,12 @@ class Unet(nn.Module):
         if cond_on_text:
             assert exists(text_embed_dim), 'text_embed_dim must be given to the unet if cond_on_text is True'
             self.text_to_cond = nn.Linear(text_embed_dim, cond_dim)
+            
+        # label conditioning (optional)
+        
+        if cond_on_labels:
+            assert exists(label_embed_dim), 'label_embed_dim must be given to the unet if cond_on_labels is True'
+            self.label_to_cond = nn.Embedding(label_embed_dim, cond_dim) # categorical inputs
 
         # finer control over whether to condition on text encodings
 
@@ -1448,7 +1456,9 @@ class Unet(nn.Module):
         text_embed_dim,
         channels,
         channels_out,
-        cond_on_text
+        cond_on_text,
+        cond_on_labels,
+        label_embed_dim
     ):
         if lowres_cond == self.lowres_cond and \
             channels == self.channels and \
@@ -1462,7 +1472,9 @@ class Unet(nn.Module):
             text_embed_dim = text_embed_dim,
             channels = channels,
             channels_out = channels_out,
-            cond_on_text = cond_on_text
+            cond_on_text = cond_on_text,
+            cond_on_labels = cond_on_labels,
+            label_embed_dim = label_embed_dim
         )
 
         return self.__class__(**{**self._locals, **updated_kwargs})
@@ -1530,7 +1542,8 @@ class Unet(nn.Module):
         text_mask = None,
         cond_images = None,
         self_cond = None,
-        cond_drop_prob = 0.
+        cond_drop_prob = 0.,
+        label_embeds = None
     ):
         batch_size, device = x.shape[0], x.device
 
@@ -1652,6 +1665,14 @@ class Unet(nn.Module):
         # main conditioning tokens (c)
 
         c = time_tokens if not exists(text_tokens) else torch.cat((time_tokens, text_tokens), dim = -2)
+        # add : label conditioning
+        
+        if exists(label_embeds):
+            label_tokens = self.label_to_cond(label_embeds).unsqueeze(-2)
+            # print("Label Tokens: ", label_tokens.shape)
+            # print("c: ", c.shape)
+            c = torch.cat((c, label_tokens), dim = -2)
+            # print("c: ", c.shape)
 
         # normalize conditioning tokens
 
@@ -1800,7 +1821,7 @@ class Imagen(nn.Module):
         lowres_noise_schedule = 'linear',
         lowres_sample_noise_level = 0.2,            # in the paper, they present a new trick where they noise the lowres conditioning image, and at sample time, fix it to a certain level (0.1 or 0.3) - the unets are also made to be conditioned on this noise level
         per_sample_random_aug_noise_level = False,  # unclear when conditioning on augmentation noise level, whether each batch element receives a random aug noise value - turning off due to @marunine's find
-        condition_on_text = True,
+        condition_on_text = False,
         auto_normalize_img = True,                  # whether to take care of normalizing the image from [0, 1] to [-1, 1] and back automatically - you can turn this off if you want to pass in the [-1, 1] ranged image yourself from the dataloader
         dynamic_thresholding = True,
         dynamic_thresholding_percentile = 0.95,     # unsure what this was based on perusal of paper
@@ -1809,7 +1830,9 @@ class Imagen(nn.Module):
         resize_cond_video_frames = True,
         resize_mode = 'nearest',
         min_snr_loss_weight = True,                 # https://arxiv.org/abs/2303.09556
-        min_snr_gamma = 5
+        min_snr_gamma = 5,
+        condition_on_labels = False,
+        label_embed_dim = None
     ):
         super().__init__()
 
@@ -1831,6 +1854,8 @@ class Imagen(nn.Module):
 
         self.condition_on_text = condition_on_text
         self.unconditional = not condition_on_text
+        self.condition_on_labels = condition_on_labels
+        self.label_embed_dim = label_embed_dim
 
         # channels
 
@@ -1897,7 +1922,9 @@ class Imagen(nn.Module):
                 cond_on_text = self.condition_on_text,
                 text_embed_dim = self.text_embed_dim if self.condition_on_text else None,
                 channels = self.channels,
-                channels_out = self.channels
+                channels_out = self.channels,
+                cond_on_labels = self.condition_on_labels,
+                label_embed_dim = self.label_embed_dim
             )
 
             self.unets.append(one_unet)
@@ -2237,7 +2264,7 @@ class Imagen(nn.Module):
                 post_cond_video_frames = post_cond_video_frames,
             )
 
-        for times, times_next in tqdm(timesteps, desc = 'sampling loop time step', total = len(timesteps), disable = not use_tqdm):
+        for times, times_next in tqdm(timesteps, desc = 'Sampling: ', total = len(timesteps), disable = not use_tqdm, position = 0, leave = True):
             is_last_timestep = times_next == 0
 
             for r in reversed(range(resample_times)):
