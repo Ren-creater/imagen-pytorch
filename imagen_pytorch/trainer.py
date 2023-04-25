@@ -244,7 +244,7 @@ class ImagenTrainer(nn.Module):
         fp16 = False,
         precision = None,
         split_batches = True,
-        dl_tuple_output_keywords_names = ('images', 'text_embeds', 'text_masks', 'cond_images', 'extra_embeds'),
+        dl_tuple_output_keywords_names = ('images', 'text_embeds', 'text_masks', 'label_embeds', 'continuous_embeds'),
         verbose = True,
         split_valid_fraction = 0.025,
         split_valid_from_train = False,
