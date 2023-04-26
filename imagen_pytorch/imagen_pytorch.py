@@ -2108,7 +2108,9 @@ class Imagen(nn.Module):
         model_output = None,
         t_next = None,
         pred_objective = 'noise',
-        dynamic_threshold = True
+        dynamic_threshold = True,
+        label_embeds = None,
+        continuous_embeds = None
     ):
         assert not (cond_scale != 1. and not self.can_classifier_guidance), 'imagen was not trained with conditional dropout, and thus one cannot use classifier free guidance (cond_scale anything other than 1)'
 
@@ -2129,6 +2131,8 @@ class Imagen(nn.Module):
             lowres_cond_img = lowres_cond_img,
             self_cond = self_cond,
             lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
+            label_embeds = label_embeds,
+            continuous_embeds = continuous_embeds,
             **video_kwargs
         ))
 
@@ -2178,7 +2182,9 @@ class Imagen(nn.Module):
         lowres_cond_img = None,
         lowres_noise_times = None,
         pred_objective = 'noise',
-        dynamic_threshold = True
+        dynamic_threshold = True,
+        label_embeds = None,
+        continuous_embeds = None
     ):
         b, *_, device = *x.shape, x.device
 
@@ -2204,6 +2210,8 @@ class Imagen(nn.Module):
             lowres_noise_times = lowres_noise_times,
             pred_objective = pred_objective,
             dynamic_threshold = dynamic_threshold,
+            label_embeds = label_embeds,
+            continuous_embeds = continuous_embeds,
             **video_kwargs
         )
 
@@ -2237,7 +2245,9 @@ class Imagen(nn.Module):
         cond_scale = 1,
         pred_objective = 'noise',
         dynamic_threshold = True,
-        use_tqdm = True
+        use_tqdm = True,
+        label_embeds = None,
+        continuous_embeds = None
     ):
         device = self.device
 
@@ -2316,6 +2326,8 @@ class Imagen(nn.Module):
                     noise_scheduler = noise_scheduler,
                     pred_objective = pred_objective,
                     dynamic_threshold = dynamic_threshold,
+                    label_embeds = label_embeds,
+                    continuous_embeds = continuous_embeds,
                     **video_kwargs
                 )
 
@@ -2366,7 +2378,9 @@ class Imagen(nn.Module):
         return_pil_images = False,
         device = None,
         use_tqdm = True,
-        use_one_unet_in_gpu = True
+        use_one_unet_in_gpu = True,
+        label_embeds = None,
+        continuous_embeds = None
     ):
         device = default(device, self.device)
         self.reset_unets_all_one_device(device = device)
@@ -2404,6 +2418,11 @@ class Imagen(nn.Module):
         assert not (exists(text_embeds) and text_embeds.shape[-1] != self.text_embed_dim), f'invalid text embedding dimension being passed in (should be {self.text_embed_dim})'
 
         assert not (exists(inpaint_images) ^ exists(inpaint_masks)),  'inpaint images and masks must be both passed in to do inpainting'
+        
+        # Assert label_embeds and continuous_embeds
+        
+        assert not (self.condition_on_labels and not exists(label_embeds)), 'label encoding must be passed into imagen if specified'
+        assert not (self.condition_on_continuous and not exists(continuous_embeds)), 'continuous encoding must be passed into imagen if specified'
 
         outputs = []
 
@@ -2525,6 +2544,8 @@ class Imagen(nn.Module):
                     pred_objective = pred_objective,
                     dynamic_threshold = dynamic_threshold,
                     use_tqdm = use_tqdm,
+                    label_embeds = label_embeds,
+                    continuous_embeds = continuous_embeds,
                     **video_kwargs
                 )
 
