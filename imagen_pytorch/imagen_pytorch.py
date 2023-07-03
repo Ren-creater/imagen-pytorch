@@ -1686,10 +1686,7 @@ class Unet(nn.Module):
         
         if exists(continuous_embeds):
             continuous_tokens = self.continuous_to_cond(continuous_embeds).unsqueeze(-2)
-            # print(f"Continuous tokens: {continuous_tokens.shape}")
-            # print(f"c: {c.shape}")
             c = torch.cat((c, continuous_tokens), dim = -2)
-            # print(f"c: {c.shape}")
         
 
         # normalize conditioning tokens
