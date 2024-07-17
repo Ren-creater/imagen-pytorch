@@ -1272,7 +1272,11 @@ class Unet3D(nn.Module):
         self_cond = False,
         combine_upsample_fmaps = False,      # combine feature maps from all upsample blocks, used in unet squared successfully
         pixel_shuffle_upsample = True,       # may address checkboard artifacts
-        resize_mode = 'nearest'
+        resize_mode = 'nearest',
+        cond_on_labels = False, 
+        label_embed_dim = None,
+        cond_on_continuous = False,
+        continuous_embed_dim = None,
     ):
         super().__init__()
 
@@ -1373,6 +1377,18 @@ class Unet3D(nn.Module):
         if cond_on_text:
             assert exists(text_embed_dim), 'text_embed_dim must be given to the unet if cond_on_text is True'
             self.text_to_cond = nn.Linear(text_embed_dim, cond_dim)
+
+        # label conditioning (optional)
+        
+        if cond_on_labels:
+            assert exists(label_embed_dim), 'label_embed_dim must be given to the unet if cond_on_labels is True'
+            self.label_to_cond = nn.Embedding(label_embed_dim, cond_dim) # categorical inputs
+            
+        # continuous value conditioning (optional)
+        
+        if cond_on_continuous:
+            assert exists(continuous_embed_dim), 'continuous_embed_dim must be given to the unet if cond_on_continuous is True'
+            self.continuous_to_cond = nn.Linear(continuous_embed_dim, cond_dim)
 
         # finer control over whether to condition on text encodings
 
@@ -1576,7 +1592,11 @@ class Unet3D(nn.Module):
         text_embed_dim,
         channels,
         channels_out,
-        cond_on_text
+        cond_on_text,
+        cond_on_labels,
+        label_embed_dim,
+        cond_on_continuous,
+        continuous_embed_dim
     ):
         if lowres_cond == self.lowres_cond and \
             channels == self.channels and \
@@ -1590,7 +1610,11 @@ class Unet3D(nn.Module):
             text_embed_dim = text_embed_dim,
             channels = channels,
             channels_out = channels_out,
-            cond_on_text = cond_on_text
+            cond_on_text = cond_on_text,
+            cond_on_labels = cond_on_labels,
+            label_embed_dim = label_embed_dim,
+            cond_on_continuous = cond_on_continuous,
+            continuous_embed_dim = continuous_embed_dim
         )
 
         return self.__class__(**{**self._locals, **updated_kwargs})
@@ -1661,7 +1685,9 @@ class Unet3D(nn.Module):
         post_cond_video_frames = None,
         self_cond = None,
         cond_drop_prob = 0.,
-        ignore_time = False
+        ignore_time = False,
+        label_embeds = None,
+        continuous_embeds = None
     ):
         assert x.ndim == 5, 'input to 3d unet must have 5 dimensions (batch, channels, time, height, width)'
 
@@ -1835,6 +1861,17 @@ class Unet3D(nn.Module):
         # main conditioning tokens (c)
 
         c = time_tokens if not exists(text_tokens) else torch.cat((time_tokens, text_tokens), dim = -2)
+
+        # add: label conditioning
+        
+        if exists(label_embeds):
+            label_tokens = self.label_to_cond(label_embeds).unsqueeze(-2)
+            c = torch.cat((c, label_tokens), dim = -2)
+        
+        if exists(continuous_embeds):
+            continuous_tokens = self.continuous_to_cond(continuous_embeds).unsqueeze(-2)
+            c = torch.cat((c, continuous_tokens), dim = -2)
+
 
         # normalize conditioning tokens
 
