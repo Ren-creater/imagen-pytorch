@@ -2125,7 +2125,7 @@ class Imagen(nn.Module):
             )
 
         if self.is_video and wr_scale != 0:
-            x[cond_video_frames.shape[2]:].requires_grad_()
+            x[:, :, cond_video_frames.shape[2]:].requires_grad_()
 
         pred = default(model_output, lambda: unet.forward_with_cond_scale(
             x,
@@ -2152,11 +2152,11 @@ class Imagen(nn.Module):
             raise ValueError(f'unknown objective {pred_objective}')
         
         if self.is_video and wr_scale != 0:
-            losses = F.mse_loss(x_start[:cond_video_frames.shape[2]], cond_video_frames, reduction = 'none')**2
+            losses = F.mse_loss(x_start[:, :, :cond_video_frames.shape[2]], cond_video_frames, reduction = 'none')**2
             def gradient_wrt_xb(losses):
                 # Clear previous gradients if any
-                if x[cond_video_frames.shape[2]:].grad is not None:
-                    x[cond_video_frames.shape[2]:].grad.zero_()
+                if x[:, :, cond_video_frames.shape[2]:].grad is not None:
+                    x[:, :, cond_video_frames.shape[2]:].grad.zero_()
                 # Compute the gradient of the loss with respect to x
                 losses.backward(torch.ones_like(losses))
                 return x.grad
