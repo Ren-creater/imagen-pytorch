@@ -2180,7 +2180,6 @@ class Imagen(nn.Module):
         mean_and_variance = noise_scheduler.q_posterior(x_start = x_start, x_t = x, t = t, t_next = t_next)
         return mean_and_variance, x_start
 
-    @torch.no_grad()
     def p_sample(
         self,
         unet,
@@ -2242,7 +2241,6 @@ class Imagen(nn.Module):
 
         return pred, x_start
 
-    @torch.no_grad()
     def p_sample_loop(
         self,
         unet,
@@ -2372,7 +2370,6 @@ class Imagen(nn.Module):
         unnormalize_img = self.unnormalize_img(img)
         return unnormalize_img
 
-    @torch.no_grad()
     @eval_decorator
     @beartype
     def sample(
