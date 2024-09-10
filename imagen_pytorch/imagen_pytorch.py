@@ -2148,7 +2148,7 @@ class Imagen(nn.Module):
         else:
             raise ValueError(f'unknown objective {pred_objective}')
         
-        if self.is_video:
+        if self.is_video and wr_scale != 0:
             losses = F.mse_loss(x_start[:cond_video_frames.shape[2]], cond_video_frames, reduction = 'none')**2
             losses = reduce(losses, 'b ... -> b', 'sum')
             def gradient_wrt_xb(losses):
