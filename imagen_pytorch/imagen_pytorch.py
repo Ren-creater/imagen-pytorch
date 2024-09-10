@@ -2158,7 +2158,7 @@ class Imagen(nn.Module):
                 if x[cond_video_frames.shape[2]:].grad is not None:
                     x[cond_video_frames.shape[2]:].grad.zero_()
                 # Compute the gradient of the loss with respect to x
-                losses.backward()
+                losses.backward(torch.ones_like(losses))
                 return x.grad
             x_start = x_start - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_xb(losses)
 
