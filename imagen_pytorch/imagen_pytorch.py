@@ -318,6 +318,12 @@ class GaussianDiffusionContinuousTimes(nn.Module):
         log_snr = right_pad_dims_to(x_t, log_snr)
         alpha, sigma = log_snr_to_alpha_sigma(log_snr)
         return (x_t - sigma * noise) / alpha.clamp(min = 1e-8)
+    
+    def get_alpha(self, x_t, t):
+        log_snr = self.log_snr(t)
+        log_snr = right_pad_dims_to(x_t, log_snr)
+        alpha, sigma = log_snr_to_alpha_sigma(log_snr)
+        return alpha
 
 # norms and residuals
 
@@ -2097,6 +2103,7 @@ class Imagen(nn.Module):
         cond_images = None,
         cond_video_frames = None,
         post_cond_video_frames = None,
+        wr_scale = 0,
         lowres_cond_img = None,
         self_cond = None,
         lowres_noise_times = None,
@@ -2140,6 +2147,20 @@ class Imagen(nn.Module):
             x_start = noise_scheduler.predict_start_from_v(x, t = t, v = pred)
         else:
             raise ValueError(f'unknown objective {pred_objective}')
+        
+        if self.is_video:
+            losses = F.mse_loss(x_start[:cond_video_frames.shape[2]], cond_video_frames, reduction = 'none')**2
+            losses = reduce(losses, 'b ... -> b', 'sum')
+            def gradient_wrt_xb(losses):
+                # Ensure that gradients are computed for x
+                x[cond_video_frames.shape[2]:].requires_grad_()
+                # Clear previous gradients if any
+                if x[cond_video_frames.shape[2]:].grad is not None:
+                    x[cond_video_frames.shape[2]:].grad.zero_()
+                # Compute the gradient of the loss with respect to x
+                losses.backward()
+                return x.grad
+            x_start = x_start - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_xb(losses)
 
         if dynamic_threshold:
             # following pseudocode in appendix
@@ -2173,6 +2194,7 @@ class Imagen(nn.Module):
         cond_images = None,
         cond_video_frames = None,
         post_cond_video_frames = None,
+        wr_scale = 0,
         cond_scale = 1.,
         self_cond = None,
         lowres_cond_img = None,
@@ -2189,6 +2211,7 @@ class Imagen(nn.Module):
             video_kwargs = dict(
                 cond_video_frames = cond_video_frames,
                 post_cond_video_frames = post_cond_video_frames,
+                wr_scale = wr_scale
             )
 
         (model_mean, _, model_log_variance), x_start = self.p_mean_variance(
@@ -2216,6 +2239,7 @@ class Imagen(nn.Module):
         is_last_sampling_timestep = (t_next == 0) if isinstance(noise_scheduler, GaussianDiffusionContinuousTimes) else (t == 0)
         nonzero_mask = (1 - is_last_sampling_timestep.float()).reshape(b, *((1,) * (len(x.shape) - 1)))
         pred = model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+
         return pred, x_start
 
     @torch.no_grad()
@@ -2231,6 +2255,7 @@ class Imagen(nn.Module):
         text_mask = None,
         cond_images = None,
         cond_video_frames = None,
+        wr_scale = 0,
         post_cond_video_frames = None,
         inpaint_images = None,
         inpaint_videos = None,
@@ -2293,6 +2318,7 @@ class Imagen(nn.Module):
             video_kwargs = dict(
                 cond_video_frames = cond_video_frames,
                 post_cond_video_frames = post_cond_video_frames,
+                wr_scale = wr_scale
             )
 
         for times, times_next in tqdm(timesteps, desc = 'Sampling: ', total = len(timesteps), disable = not use_tqdm, position = 0, leave = True):
@@ -2366,6 +2392,7 @@ class Imagen(nn.Module):
         skip_steps = None,
         batch_size = 1,
         cond_scale = 1.,
+        wr_scale = 0,
         lowres_sample_noise_level = None,
         start_at_unet_number = 1,
         start_image_or_video = None,
@@ -2487,6 +2514,7 @@ class Imagen(nn.Module):
                     video_kwargs = dict(
                         cond_video_frames = cond_video_frames,
                         post_cond_video_frames = post_cond_video_frames,
+                        wr_scale = wr_scale
                     )
 
                     video_kwargs = compact(video_kwargs)
