@@ -2179,11 +2179,9 @@ class Imagen(nn.Module):
         if self.is_video and wr_scale != 0:
             xa = x_start[:, :, :cond_video_frames.shape[2]]
             xb = x_start[:, :, cond_video_frames.shape[2]:]
-            losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')**2
-            losses.requires_grad_()
+            losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')
             def gradient_wrt_zb(losses):
                 # Clear previous gradients if any
-                x.retain_grad()
                 if x.grad is not None:
                     x.grad.zero_()
                 # Compute the gradient of the loss with respect to x
