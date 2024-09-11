@@ -2187,7 +2187,13 @@ class Imagen(nn.Module):
                 if x.grad is not None:
                     x.grad.zero_()
                 # Compute the gradient of the loss with respect to x
+                print("x")
+                print(x)
                 losses.backward(torch.ones_like(losses))
+                print("losses")
+                print(losses)
+                print("x.grad")
+                print(x.grad)
                 return x.grad
             x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_zb(losses)
 
