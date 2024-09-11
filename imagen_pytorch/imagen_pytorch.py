@@ -2127,20 +2127,20 @@ class Imagen(nn.Module):
         if self.is_video and wr_scale != 0:
             x = x.clone()
             x.requires_grad_()
-            pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
-                x,
-                noise_scheduler.get_condition(t),
-                text_embeds = text_embeds,
-                text_mask = text_mask,
-                cond_images = cond_images,
-                cond_scale = cond_scale,
-                lowres_cond_img = lowres_cond_img,
-                self_cond = self_cond,
-                lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
-                label_embeds = label_embeds,
-                continuous_embeds = continuous_embeds,
-                **video_kwargs
-            ))
+            # pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
+            #     x,
+            #     noise_scheduler.get_condition(t),
+            #     text_embeds = text_embeds,
+            #     text_mask = text_mask,
+            #     cond_images = cond_images,
+            #     cond_scale = cond_scale,
+            #     lowres_cond_img = lowres_cond_img,
+            #     self_cond = self_cond,
+            #     lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
+            #     label_embeds = label_embeds,
+            #     continuous_embeds = continuous_embeds,
+            #     **video_kwargs
+            # ))
 
             pred.backward()
             print("x.grad wrt pred")
