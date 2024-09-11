@@ -2125,22 +2125,36 @@ class Imagen(nn.Module):
             )
 
         if self.is_video and wr_scale != 0:
-            x[:, :, cond_video_frames.shape[2]:].requires_grad_()
-
-        pred = default(model_output, lambda: unet.forward_with_cond_scale(
-            x,
-            noise_scheduler.get_condition(t),
-            text_embeds = text_embeds,
-            text_mask = text_mask,
-            cond_images = cond_images,
-            cond_scale = cond_scale,
-            lowres_cond_img = lowres_cond_img,
-            self_cond = self_cond,
-            lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
-            label_embeds = label_embeds,
-            continuous_embeds = continuous_embeds,
-            **video_kwargs
-        ))
+            x.requires_grad_()
+            pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
+                x,
+                noise_scheduler.get_condition(t),
+                text_embeds = text_embeds,
+                text_mask = text_mask,
+                cond_images = cond_images,
+                cond_scale = cond_scale,
+                lowres_cond_img = lowres_cond_img,
+                self_cond = self_cond,
+                lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
+                label_embeds = label_embeds,
+                continuous_embeds = continuous_embeds,
+                **video_kwargs
+            ))
+        else:
+            pred = default(model_output, lambda: unet.forward_with_cond_scale(
+                x,
+                noise_scheduler.get_condition(t),
+                text_embeds = text_embeds,
+                text_mask = text_mask,
+                cond_images = cond_images,
+                cond_scale = cond_scale,
+                lowres_cond_img = lowres_cond_img,
+                self_cond = self_cond,
+                lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
+                label_embeds = label_embeds,
+                continuous_embeds = continuous_embeds,
+                **video_kwargs
+            ))
 
         if pred_objective == 'noise':
             x_start = noise_scheduler.predict_start_from_noise(x, t = t, noise = pred)
@@ -2152,16 +2166,18 @@ class Imagen(nn.Module):
             raise ValueError(f'unknown objective {pred_objective}')
         
         if self.is_video and wr_scale != 0:
-            losses = F.mse_loss(x_start[:, :, :cond_video_frames.shape[2]], cond_video_frames, reduction = 'none')**2
-            def gradient_wrt_xb(losses):
+            xa = x_start[:, :, :cond_video_frames.shape[2]]
+            xb = x_start[:, :, cond_video_frames.shape[2]:]
+            losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')**2
+            def gradient_wrt_zb(losses):
                 # Clear previous gradients if any
-                x[:, :, cond_video_frames.shape[2]:].retain_grad()
-                if x[:, :, cond_video_frames.shape[2]:].grad is not None:
-                    x[:, :, cond_video_frames.shape[2]:].grad.zero_()
+                x.retain_grad()
+                if x.grad is not None:
+                    x.grad.zero_()
                 # Compute the gradient of the loss with respect to x
                 losses.backward(torch.ones_like(losses))
                 return x.grad
-            x_start = x_start - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_xb(losses)
+            x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_zb(losses)
 
         if dynamic_threshold:
             # following pseudocode in appendix
@@ -2180,7 +2196,8 @@ class Imagen(nn.Module):
 
         mean_and_variance = noise_scheduler.q_posterior(x_start = x_start, x_t = x, t = t, t_next = t_next)
         return mean_and_variance, x_start
-
+    
+    @torch.no_grad
     def p_sample(
         self,
         unet,
@@ -2242,6 +2259,7 @@ class Imagen(nn.Module):
 
         return pred, x_start
 
+    @torch.no_grad
     def p_sample_loop(
         self,
         unet,
@@ -2371,6 +2389,7 @@ class Imagen(nn.Module):
         unnormalize_img = self.unnormalize_img(img)
         return unnormalize_img
 
+    @torch.no_grad
     @eval_decorator
     @beartype
     def sample(

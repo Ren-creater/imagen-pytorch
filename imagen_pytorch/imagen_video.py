@@ -1970,3 +1970,320 @@ class Unet3D(nn.Module):
             out = out[:, :, :-num_succeeding_frames]
 
         return out
+
+
+
+    def forward_with_cond_scale_wr(
+        self,
+        *args,
+        cond_scale = 1.,
+        **kwargs
+    ):
+        logits = self.forward_wr(*args, **kwargs)
+
+        if cond_scale == 1:
+            return logits
+
+        null_logits = self.forward_wr(*args, cond_drop_prob = 1., **kwargs)
+        return null_logits + (logits - null_logits) * cond_scale
+
+    def forward_wr(
+        self,
+        x,
+        time,
+        *,
+        lowres_cond_img = None,
+        lowres_noise_times = None,
+        text_embeds = None,
+        text_mask = None,
+        cond_images = None,
+        cond_video_frames = None,
+        post_cond_video_frames = None,
+        self_cond = None,
+        cond_drop_prob = 0.,
+        ignore_time = False,
+        label_embeds = None,
+        continuous_embeds = None
+    ):
+        assert x.ndim == 5, 'input to 3d unet must have 5 dimensions (batch, channels, time, height, width)'
+
+        batch_size, frames, device, dtype = x.shape[0], x.shape[2], x.device, x.dtype
+
+        assert ignore_time or divisible_by(frames, self.total_temporal_divisor), f'number of input frames {frames} must be divisible by {self.total_temporal_divisor}'
+
+        # add self conditioning if needed
+
+        if self.self_cond:
+            self_cond = default(self_cond, lambda: torch.zeros_like(x))
+            x = torch.cat((x, self_cond), dim = 1)
+
+        # add low resolution conditioning, if present
+
+        assert not (self.lowres_cond and not exists(lowres_cond_img)), 'low resolution conditioning image must be present'
+        assert not (self.lowres_cond and not exists(lowres_noise_times)), 'low resolution conditioning noise time must be present'
+
+        if exists(lowres_cond_img):
+            x = torch.cat((x, lowres_cond_img), dim = 1)
+
+            if exists(cond_video_frames):
+                lowres_cond_img = torch.cat((cond_video_frames, lowres_cond_img), dim = 2)
+                cond_video_frames = torch.cat((cond_video_frames, cond_video_frames), dim = 1)
+
+            if exists(post_cond_video_frames):
+                lowres_cond_img = torch.cat((lowres_cond_img, post_cond_video_frames), dim = 2)
+                post_cond_video_frames = torch.cat((post_cond_video_frames, post_cond_video_frames), dim = 1)
+
+        # conditioning on video frames as a prompt
+
+        num_preceding_frames = 0
+        if exists(cond_video_frames):
+            cond_video_frames_len = cond_video_frames.shape[2]
+
+            assert divisible_by(cond_video_frames_len, self.total_temporal_divisor)
+
+            cond_video_frames = resize_video_to(cond_video_frames, x.shape[-1])
+            x = torch.cat((cond_video_frames, x), dim = 2)
+
+            num_preceding_frames = cond_video_frames_len
+
+        # conditioning on video frames as a prompt
+
+        num_succeeding_frames = 0
+        if exists(post_cond_video_frames):
+            cond_video_frames_len = post_cond_video_frames.shape[2]
+
+            assert divisible_by(cond_video_frames_len, self.total_temporal_divisor)
+
+            post_cond_video_frames = resize_video_to(post_cond_video_frames, x.shape[-1])
+            x = torch.cat((post_cond_video_frames, x), dim = 2)
+
+            num_succeeding_frames = cond_video_frames_len
+
+        # condition on input image
+
+        assert not (self.has_cond_image ^ exists(cond_images)), 'you either requested to condition on an image on the unet, but the conditioning image is not supplied, or vice versa'
+
+        if exists(cond_images):
+            assert cond_images.ndim == 4, 'conditioning images must have 4 dimensions only, if you want to condition on frames of video, use `cond_video_frames` instead'
+            assert cond_images.shape[1] == self.cond_images_channels, 'the number of channels on the conditioning image you are passing in does not match what you specified on initialiation of the unet'
+
+            cond_images = repeat(cond_images, 'b c h w -> b c f h w', f = x.shape[2])
+            cond_images = resize_video_to(cond_images, x.shape[-1], mode = self.resize_mode)
+
+            x = torch.cat((cond_images, x), dim = 1)
+
+        # ignoring time in pseudo 3d resnet blocks
+
+        conv_kwargs = dict(
+            ignore_time = ignore_time
+        )
+
+        # initial convolution
+
+        x = self.init_conv(x)
+
+        if not ignore_time:
+            x = self.init_temporal_peg(x)
+            x = self.init_temporal_attn(x)
+
+        # init conv residual
+
+        if self.init_conv_to_final_conv_residual:
+            init_conv_residual = x.clone()
+
+        # time conditioning
+
+        time_hiddens = self.to_time_hiddens(time)
+
+        # derive time tokens
+
+        time_tokens = self.to_time_tokens(time_hiddens)
+        t = self.to_time_cond(time_hiddens)
+
+        # add lowres time conditioning to time hiddens
+        # and add lowres time tokens along sequence dimension for attention
+
+        if self.lowres_cond:
+            lowres_time_hiddens = self.to_lowres_time_hiddens(lowres_noise_times)
+            lowres_time_tokens = self.to_lowres_time_tokens(lowres_time_hiddens)
+            lowres_t = self.to_lowres_time_cond(lowres_time_hiddens)
+
+            t = t + lowres_t
+            time_tokens = torch.cat((time_tokens, lowres_time_tokens), dim = -2)
+
+        # text conditioning
+
+        text_tokens = None
+
+        if exists(text_embeds) and self.cond_on_text:
+
+            # conditional dropout
+
+            text_keep_mask = prob_mask_like((batch_size,), 1 - cond_drop_prob, device = device)
+
+            text_keep_mask_embed = rearrange(text_keep_mask, 'b -> b 1 1')
+            text_keep_mask_hidden = rearrange(text_keep_mask, 'b -> b 1')
+
+            # calculate text embeds
+
+            text_tokens = self.text_to_cond(text_embeds)
+
+            text_tokens = text_tokens[:, :self.max_text_len]
+            
+            if exists(text_mask):
+                text_mask = text_mask[:, :self.max_text_len]
+
+            text_tokens_len = text_tokens.shape[1]
+            remainder = self.max_text_len - text_tokens_len
+
+            if remainder > 0:
+                text_tokens = F.pad(text_tokens, (0, 0, 0, remainder))
+
+            if exists(text_mask):
+                if remainder > 0:
+                    text_mask = F.pad(text_mask, (0, remainder), value = False)
+
+                text_mask = rearrange(text_mask, 'b n -> b n 1')
+                text_keep_mask_embed = text_mask & text_keep_mask_embed
+
+            null_text_embed = self.null_text_embed.to(text_tokens.dtype) # for some reason pytorch AMP not working
+
+            text_tokens = torch.where(
+                text_keep_mask_embed,
+                text_tokens,
+                null_text_embed
+            )
+
+            if exists(self.attn_pool):
+                text_tokens = self.attn_pool(text_tokens)
+
+            # extra non-attention conditioning by projecting and then summing text embeddings to time
+            # termed as text hiddens
+
+            mean_pooled_text_tokens = text_tokens.mean(dim = -2)
+
+            text_hiddens = self.to_text_non_attn_cond(mean_pooled_text_tokens)
+
+            null_text_hidden = self.null_text_hidden.to(t.dtype)
+
+            text_hiddens = torch.where(
+                text_keep_mask_hidden,
+                text_hiddens,
+                null_text_hidden
+            )
+
+            t = t + text_hiddens
+
+        # main conditioning tokens (c)
+
+        c = time_tokens if not exists(text_tokens) else torch.cat((time_tokens, text_tokens), dim = -2)
+
+        # add: label conditioning
+        
+        if exists(label_embeds):
+            label_tokens = self.label_to_cond(label_embeds).unsqueeze(-2)
+            c = torch.cat((c, label_tokens), dim = -2)
+        
+        if exists(continuous_embeds):
+            continuous_tokens = self.continuous_to_cond(continuous_embeds).unsqueeze(-2)
+            c = torch.cat((c, continuous_tokens), dim = -2)
+
+
+        # normalize conditioning tokens
+
+        c = self.norm_cond(c)
+
+        # initial resnet block (for memory efficient unet)
+
+        if exists(self.init_resnet_block):
+            x = self.init_resnet_block(x, t, **conv_kwargs)
+
+        # go through the layers of the unet, down and up
+
+        hiddens = []
+
+        for pre_downsample, init_block, resnet_blocks, attn_block, temporal_peg, temporal_attn, temporal_downsample, post_downsample in self.downs:
+            if exists(pre_downsample):
+                x = pre_downsample(x)
+
+            x = init_block(x, t, c, **conv_kwargs)
+
+            for resnet_block in resnet_blocks:
+                x = resnet_block(x, t, **conv_kwargs)
+                hiddens.append(x)
+
+            x = attn_block(x, c)
+
+            if not ignore_time:
+                x = temporal_peg(x)
+                x = temporal_attn(x)
+
+            hiddens.append(x)
+
+            if exists(temporal_downsample) and not ignore_time:
+                x = temporal_downsample(x)
+
+            if exists(post_downsample):
+                x = post_downsample(x)
+
+        x = self.mid_block1(x, t, c, **conv_kwargs)
+
+        if exists(self.mid_attn):
+            x = self.mid_attn(x)
+
+        if not ignore_time:
+            x = self.mid_temporal_peg(x)
+            x = self.mid_temporal_attn(x)
+
+        x = self.mid_block2(x, t, c, **conv_kwargs)
+
+        add_skip_connection = lambda x: torch.cat((x, hiddens.pop() * self.skip_connect_scale), dim = 1)
+
+        up_hiddens = []
+
+        for init_block, resnet_blocks, attn_block, temporal_peg, temporal_attn, temporal_upsample, upsample in self.ups:
+            if exists(temporal_upsample) and not ignore_time:
+                x = temporal_upsample(x)
+
+            x = add_skip_connection(x)
+            x = init_block(x, t, c, **conv_kwargs)
+
+            for resnet_block in resnet_blocks:
+                x = add_skip_connection(x)
+                x = resnet_block(x, t, **conv_kwargs)
+
+            x = attn_block(x, c)
+
+            if not ignore_time:
+                x = temporal_peg(x)
+                x = temporal_attn(x)
+
+            up_hiddens.append(x.contiguous())
+
+            x = upsample(x)
+
+        # whether to combine all feature maps from upsample blocks
+
+        x = self.upsample_combiner(x, up_hiddens)
+
+        # final top-most residual if needed
+
+        if self.init_conv_to_final_conv_residual:
+            x = torch.cat((x, init_conv_residual), dim = 1)
+
+        if exists(self.final_res_block):
+            x = self.final_res_block(x, t, **conv_kwargs)
+
+        if exists(lowres_cond_img):
+            x = torch.cat((x, lowres_cond_img), dim = 1)
+
+        out = self.final_conv(x)
+
+        # if num_preceding_frames > 0:
+        #     out = out[:, :, num_preceding_frames:]
+
+        # if num_succeeding_frames > 0:
+        #     out = out[:, :, :-num_succeeding_frames]
+
+        return out
+
