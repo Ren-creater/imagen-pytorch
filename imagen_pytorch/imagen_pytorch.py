@@ -2125,6 +2125,7 @@ class Imagen(nn.Module):
             )
 
         if self.is_video and wr_scale != 0:
+            x = x.clone()
             x.requires_grad_()
             pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
                 x,
@@ -2141,6 +2142,10 @@ class Imagen(nn.Module):
                 **video_kwargs
             ))
 
+            pred.backward()
+            print("x.grad wrt pred")
+            print(x.grad)
+
             x_ = torch.cat([cond_video_frames, x], dim=2)
 
             if pred_objective == 'noise':
@@ -2151,6 +2156,10 @@ class Imagen(nn.Module):
                 x_start = noise_scheduler.predict_start_from_v(x_, t = t, v = pred)
             else:
                 raise ValueError(f'unknown objective {pred_objective}')
+            
+            x_start.backward()
+            print("x.grad wrt x_start")
+            print(x.grad)
         else:
             pred = default(model_output, lambda: unet.forward_with_cond_scale(
                 x,
@@ -2179,6 +2188,9 @@ class Imagen(nn.Module):
         if self.is_video and wr_scale != 0:
             xa = x_start[:, :, :cond_video_frames.shape[2]]
             xb = x_start[:, :, cond_video_frames.shape[2]:]
+            xa.backward()
+            print("x grad wrt xa")
+            print(x.grad)
             losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')
             losses.requires_grad_()
             def gradient_wrt_zb(losses):
