@@ -2183,7 +2183,7 @@ class Imagen(nn.Module):
             losses.requires_grad_()
             def gradient_wrt_zb(losses):
                 # Clear previous gradients if any
-                #x.retain_grad()
+                x.retain_grad()
                 if x.grad is not None:
                     x.grad.zero_()
                 # Compute the gradient of the loss with respect to x
