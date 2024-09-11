@@ -2140,6 +2140,17 @@ class Imagen(nn.Module):
                 continuous_embeds = continuous_embeds,
                 **video_kwargs
             ))
+
+            x_ = torch.cat([cond_video_frames, x], dim=2)
+
+            if pred_objective == 'noise':
+                x_start = noise_scheduler.predict_start_from_noise(x_, t = t, noise = pred)
+            elif pred_objective == 'x_start':
+                x_start = torch.cat([cond_video_frames, pred], dim=2)
+            elif pred_objective == 'v':
+                x_start = noise_scheduler.predict_start_from_v(x_, t = t, v = pred)
+            else:
+                raise ValueError(f'unknown objective {pred_objective}')
         else:
             pred = default(model_output, lambda: unet.forward_with_cond_scale(
                 x,
@@ -2156,14 +2167,14 @@ class Imagen(nn.Module):
                 **video_kwargs
             ))
 
-        if pred_objective == 'noise':
-            x_start = noise_scheduler.predict_start_from_noise(x, t = t, noise = pred)
-        elif pred_objective == 'x_start':
-            x_start = pred
-        elif pred_objective == 'v':
-            x_start = noise_scheduler.predict_start_from_v(x, t = t, v = pred)
-        else:
-            raise ValueError(f'unknown objective {pred_objective}')
+            if pred_objective == 'noise':
+                x_start = noise_scheduler.predict_start_from_noise(x, t = t, noise = pred)
+            elif pred_objective == 'x_start':
+                x_start = pred
+            elif pred_objective == 'v':
+                x_start = noise_scheduler.predict_start_from_v(x, t = t, v = pred)
+            else:
+                raise ValueError(f'unknown objective {pred_objective}')
         
         if self.is_video and wr_scale != 0:
             xa = x_start[:, :, :cond_video_frames.shape[2]]
