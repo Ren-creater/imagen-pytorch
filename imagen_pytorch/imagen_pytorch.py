@@ -2091,7 +2091,6 @@ class Imagen(nn.Module):
 
     # gaussian diffusion methods
 
-    @torch.enable_grad()
     def p_mean_variance(
         self,
         unet,
@@ -2141,6 +2140,7 @@ class Imagen(nn.Module):
                 continuous_embeds = continuous_embeds,
                 **video_kwargs
             ))
+            pred.requires_grad_()
 
             x_ = torch.cat([cond_video_frames, x], dim=2)
 
@@ -2181,7 +2181,9 @@ class Imagen(nn.Module):
         if self.is_video and wr_scale != 0:
             xa = x_start[:, :, :cond_video_frames.shape[2]]
             xb = x_start[:, :, cond_video_frames.shape[2]:]
+            xa.requires_grad_()
             losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')
+            losses.requires_grad_()
             def gradient_wrt_zb(losses):
                 x.retain_grad()
                 if x.grad is not None:
