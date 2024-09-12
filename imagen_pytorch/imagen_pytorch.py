@@ -2091,6 +2091,7 @@ class Imagen(nn.Module):
 
     # gaussian diffusion methods
 
+    @torch.enable_grad()
     def p_mean_variance(
         self,
         unet,
