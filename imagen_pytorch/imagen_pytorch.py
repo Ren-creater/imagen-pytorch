@@ -2127,25 +2127,20 @@ class Imagen(nn.Module):
 
         if self.is_video and wr_scale != 0:
             x.requires_grad_()
-            pred = x+1#torch.cat([cond_video_frames, x], dim=2)
-            # pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
-            #     x,
-            #     noise_scheduler.get_condition(t),
-            #     text_embeds = text_embeds,
-            #     text_mask = text_mask,
-            #     cond_images = cond_images,
-            #     cond_scale = cond_scale,
-            #     lowres_cond_img = lowres_cond_img,
-            #     self_cond = self_cond,
-            #     lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
-            #     label_embeds = label_embeds,
-            #     continuous_embeds = continuous_embeds,
-            #     **video_kwargs
-            # ))
-
-            pred.backward(torch.ones_like(x))
-            print("x.grad wrt pred")
-            print(x.grad)
+            pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
+                x,
+                noise_scheduler.get_condition(t),
+                text_embeds = text_embeds,
+                text_mask = text_mask,
+                cond_images = cond_images,
+                cond_scale = cond_scale,
+                lowres_cond_img = lowres_cond_img,
+                self_cond = self_cond,
+                lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
+                label_embeds = label_embeds,
+                continuous_embeds = continuous_embeds,
+                **video_kwargs
+            ))
 
             x_ = torch.cat([cond_video_frames, x], dim=2)
 
@@ -2158,9 +2153,6 @@ class Imagen(nn.Module):
             else:
                 raise ValueError(f'unknown objective {pred_objective}')
             
-            x_start.backward()
-            print("x.grad wrt x_start")
-            print(x.grad)
         else:
             pred = default(model_output, lambda: unet.forward_with_cond_scale(
                 x,
@@ -2190,23 +2182,12 @@ class Imagen(nn.Module):
             xa = x_start[:, :, :cond_video_frames.shape[2]]
             xb = x_start[:, :, cond_video_frames.shape[2]:]
             xa.backward()
-            print("x grad wrt xa")
-            print(x.grad)
             losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')
             losses.requires_grad_()
             def gradient_wrt_zb(losses):
-                # Clear previous gradients if any
                 x.retain_grad()
                 if x.grad is not None:
                     x.grad.zero_()
-                # Compute the gradient of the loss with respect to x
-                print("x")
-                print(x)
-                losses.backward(torch.ones_like(losses))
-                print("losses")
-                print(losses)
-                print("x.grad")
-                print(x.grad)
                 return x.grad
             x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_zb(losses)
 
