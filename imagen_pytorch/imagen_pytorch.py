@@ -2186,6 +2186,7 @@ class Imagen(nn.Module):
                 x.retain_grad()
                 if x.grad is not None:
                     x.grad.zero_()
+                losses.backward(torch.ones_like(losses))
                 return x.grad
             x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_zb(losses)
 
