@@ -2005,8 +2005,6 @@ class Unet3D(nn.Module):
         label_embeds = None,
         continuous_embeds = None
     ):
-        v = torch.cat([cond_video_frames, x], dim=2)
-        return v
         assert x.ndim == 5, 'input to 3d unet must have 5 dimensions (batch, channels, time, height, width)'
 
         batch_size, frames, device, dtype = x.shape[0], x.shape[2], x.device, x.dtype
