@@ -2128,13 +2128,13 @@ class Imagen(nn.Module):
             with torch.enable_grad():
                 x.requires_grad_()
                 x.retain_grad()
-                pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
+                pred = default(model_output, lambda: unet.forward_wr(
                     x,
                     noise_scheduler.get_condition(t),
                     text_embeds = text_embeds,
                     text_mask = text_mask,
                     cond_images = cond_images,
-                    cond_scale = cond_scale,
+                    #cond_scale = cond_scale,
                     lowres_cond_img = lowres_cond_img,
                     self_cond = self_cond,
                     lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
