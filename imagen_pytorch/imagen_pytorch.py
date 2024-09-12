@@ -2126,7 +2126,7 @@ class Imagen(nn.Module):
 
         if self.is_video and wr_scale != 0:
             x.requires_grad_()
-            pred = torch.cat({cond_video_frames, x}, dim=2)
+            pred = torch.cat([cond_video_frames, x], dim=2)
             # pred = default(model_output, lambda: unet.forward_with_cond_scale_wr(
             #     x,
             #     noise_scheduler.get_condition(t),
