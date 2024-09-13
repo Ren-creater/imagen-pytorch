@@ -2125,10 +2125,7 @@ class Imagen(nn.Module):
             )
 
         if self.is_video and wr_scale != 0:
-            with torch.enable_grad():
-                x.requires_grad_()
-                x.retain_grad()
-                pred = default(model_output, lambda: unet.forward_wr(
+            cond = lambda: unet.forward_wr(
                     x,
                     noise_scheduler.get_condition(t),
                     text_embeds = text_embeds,
@@ -2141,29 +2138,52 @@ class Imagen(nn.Module):
                     label_embeds = label_embeds,
                     continuous_embeds = continuous_embeds,
                     **video_kwargs
-                ))
+                )
+            uncond = lambda: unet.forward_wr(
+                    x,
+                    noise_scheduler.get_condition(t),
+                    text_embeds = text_embeds,
+                    text_mask = text_mask,
+                    cond_images = cond_images,
+                    cond_drop_prob = 1.,
+                    lowres_cond_img = lowres_cond_img,
+                    self_cond = self_cond,
+                    lowres_noise_times = self.lowres_noise_schedule.get_condition(lowres_noise_times),
+                    label_embeds = label_embeds,
+                    continuous_embeds = continuous_embeds,
+                    **video_kwargs
+                )
+            results = []
+            for func in [cond, uncond]:
+                with torch.enable_grad():
+                    x.requires_grad_()
+                    x.retain_grad()
+                    pred = default(model_output, func)
 
-                x_ = torch.cat([cond_video_frames, x], dim=2)
+                    x_ = torch.cat([cond_video_frames, x], dim=2)
 
-                if pred_objective == 'noise':
-                    x_start = noise_scheduler.predict_start_from_noise(x_, t = t, noise = pred)
-                elif pred_objective == 'x_start':
-                    x_start = torch.cat([cond_video_frames, pred], dim=2)
-                elif pred_objective == 'v':
-                    x_start = noise_scheduler.predict_start_from_v(x_, t = t, v = pred)
-                else:
-                    raise ValueError(f'unknown objective {pred_objective}')
-                
-                xa = x_start[:, :, :cond_video_frames.shape[2]]
-                xb = x_start[:, :, cond_video_frames.shape[2]:]
-                losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')
-                def gradient_wrt_zb(losses):
-                    if x.grad is not None:
-                        x.grad.zero_()
-                    losses.backward(gradient=torch.ones_like(losses), inputs=(x,))
-                    return x.grad
-                x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_zb(losses)
-
+                    if pred_objective == 'noise':
+                        x_start = noise_scheduler.predict_start_from_noise(x_, t = t, noise = pred)
+                    elif pred_objective == 'x_start':
+                        x_start = torch.cat([cond_video_frames, pred], dim=2)
+                    elif pred_objective == 'v':
+                        x_start = noise_scheduler.predict_start_from_v(x_, t = t, v = pred)
+                    else:
+                        raise ValueError(f'unknown objective {pred_objective}')
+                    
+                    xa = x_start[:, :, :cond_video_frames.shape[2]]
+                    xb = x_start[:, :, cond_video_frames.shape[2]:]
+                    losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')
+                    def gradient_wrt_zb(losses):
+                        if x.grad is not None:
+                            x.grad.zero_()
+                        losses.backward(gradient=torch.ones_like(losses), inputs=(x,))
+                        return x.grad
+                    x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_zb(losses)
+                    results.append(x_start)
+            logits = results[0]
+            null_logits = results[1]
+            x_start = null_logits + (logits - null_logits) * cond_scale
         else:
             pred = default(model_output, lambda: unet.forward_with_cond_scale(
                 x,
