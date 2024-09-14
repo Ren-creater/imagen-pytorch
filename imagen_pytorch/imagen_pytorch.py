@@ -2173,13 +2173,9 @@ class Imagen(nn.Module):
                     
                     xa = x_start[:, :, :cond_video_frames.shape[2]]
                     xb = x_start[:, :, cond_video_frames.shape[2]:]
-                    losses = F.mse_loss(xa, cond_video_frames, reduction = 'none')
-                    def gradient_wrt_zb(losses):
-                        if x.grad is not None:
-                            x.grad.zero_()
-                        losses.backward(gradient=torch.ones_like(losses), inputs=(x,))
-                        return x.grad
-                    x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * gradient_wrt_zb(losses)
+                    l2_norm = torch.norm(cond_video_frames - xa, p=2) ** 2
+                    grad_z_t_b = torch.autograd.grad(l2_norm, x, create_graph=True)[0]
+                    x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * grad_z_t_b
                     results.append(x_start)
             logits = results[0]
             null_logits = results[1]
