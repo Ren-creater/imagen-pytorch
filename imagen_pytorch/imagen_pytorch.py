@@ -2174,7 +2174,7 @@ class Imagen(nn.Module):
                     xa = x_start[:, :, :cond_video_frames.shape[2]]
                     xb = x_start[:, :, cond_video_frames.shape[2]:]
                     l2_norm = torch.norm(cond_video_frames - xa, p=2) ** 2
-                    grad_z_t_b = torch.autograd.grad(l2_norm, x, create_graph=True)[0]
+                    grad_z_t_b = torch.autograd.grad(l2_norm, x, create_graph=False)[0]
                     x_start = xb - (wr_scale * noise_scheduler.get_alpha(x, t = t)/2) * grad_z_t_b
                     results.append(x_start)
             logits = results[0]
